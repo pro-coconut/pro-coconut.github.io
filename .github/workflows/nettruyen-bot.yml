@@ -1,15 +1,16 @@
-name: NetTruyen Auto Scraper Bot
+name: NetTruyen Scraper Bot
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # mỗi 30 phút
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 jobs:
   scrape-and-update:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -20,17 +21,16 @@ jobs:
       - name: Install dependencies
         run: pip install requests beautifulsoup4 lxml
 
-      - name: Run scraper (random 1 story)
+      - name: Run scraper
         env:
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
-          API_KEY: ${{ secrets.API_KEY }}
-          MAX_LISTING_PAGES: 5
-          DELAY: 1.5
+          MAX_PAGES: 20
         run: python scraper.py
 
-      - name: Commit & push updated stories.json (optional)
+      - name: Commit posted.json
         run: |
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
-          git add stories.json || echo "No stories.json"
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Bot update $(date +'%Y-%m-%d %H:%M')" && git push) || echo "No changes to commit"
+          git config --global user.email "bot@github.com"
+          git config --global user.name "Auto Bot"
+          git add posted.json
+          git commit -m "update posted list" || echo "No changes"
+          git push
