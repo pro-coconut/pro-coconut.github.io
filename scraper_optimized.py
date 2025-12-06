@@ -13,8 +13,8 @@ if not GITHUB_TOKEN:
     raise ValueError("Missing GitHub token! Set secret MY_GITHUB_TOKEN and map to GITHUB_TOKEN_BOT in workflow.")
 
 STORIES_FILE = "stories.json"
-MAX_STORIES_PER_RUN = 3    # giới hạn số truyện scrape mỗi run
-MAX_CHAPTERS_PER_STORY = 10  # giới hạn số chapter mới scrape mỗi truyện
+MAX_STORIES_PER_RUN = 3       # số truyện scrape mỗi run
+MAX_CHAPTERS_PER_STORY = 10   # số chapter mới scrape mỗi truyện
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -102,14 +102,19 @@ def scrape_story(story_url, existing_chapters=None):
     }
 
 # ----------------------------
-# PUSH TO GITHUB
+# PUSH TO GITHUB USING TOKEN
 # ----------------------------
 def push_to_github():
     repo = Repo(".")
+    remote = repo.remote(name="origin")
+    # Sửa URL remote để dùng token
+    token_url = f"https://{GITHUB_TOKEN}@github.com/pro-coconut/pro-coconut.github.io.git"
+    remote.set_url(token_url)
+
     repo.git.add(STORIES_FILE)
     repo.index.commit("Update stories.json via bot")
-    repo.remote().push()
-    print("[INFO] stories.json pushed to GitHub!")
+    remote.push()
+    print("[INFO] stories.json pushed to GitHub successfully!")
 
 # ----------------------------
 # RUN SCRAPER
