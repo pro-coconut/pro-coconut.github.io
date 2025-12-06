@@ -18,15 +18,10 @@ HEADERS = {
 }
 
 # ----------------------------
-# TOKEN INPUT
+# TOKEN CỨNG
 # ----------------------------
-def get_github_token():
-    token = input("Nhập GitHub token (PAT, repo scope) để push: ").strip()
-    if not token:
-        raise ValueError("Token trống! Hãy nhập token hợp lệ.")
-    return token
-
-GITHUB_TOKEN = get_github_token()
+# Thay token của bạn vào đây
+GITHUB_TOKEN = "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"
 
 # ----------------------------
 # UTILITIES
@@ -115,7 +110,6 @@ def push_to_github():
     repo = Repo(".")
     remote = repo.remote(name="origin")
 
-    # Sửa URL remote để dùng token
     token_url = f"https://{GITHUB_TOKEN}@github.com/pro-coconut/pro-coconut.github.io.git"
     remote.set_url(token_url)
 
