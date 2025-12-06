@@ -4,32 +4,40 @@ import json
 import os
 import time
 from urllib.parse import quote
+import re
 
-# Cấu hình cho nettruyen0209.com
+# Cấu hình
 BASE_URL = "https://nettruyen0209.com"
-DELAY = 3  # Giây giữa các request
-NUM_TRUYEN_QUET = 10  # Quét 10 truyện hot mới nhất
+DELAY = 4  # Delay an toàn hơn
+NUM_TRUYEN_QUET = 5  # Quét ít hơn để test nhanh
 
 def get_hot_stories():
-    """Quét trang chủ/hot lấy danh sách truyện mới nhất – dựa trên HTML thực tế"""
-    url = f"{BASE_URL}/truyen-hot"  # Trang hot stories
+    """Quét trang hot lấy danh sách truyện – selector thực tế từ HTML nguồn"""
+    url = f"{BASE_URL}/truyen-hot"
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
     }
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, timeout=15)
         res.raise_for_status()
         soup = BeautifulSoup(res.text, 'html.parser')
         
         stories = []
-        # Selector thực tế từ HTML: dùng 'div.story-item' hoặc 'a[href*="/manga/"]' (dựa trên tool check)
-        items = soup.select('div.story-item a[href*="/manga/"], .manga-item a, h3 a, .item a')[:NUM_TRUYEN_QUET]
+        # Selector thực tế: dùng .story-item hoặc .manga-item (dựa trên inspect HTML)
+        items = soup.select('.story-item a[href*="/manga/"], .manga-item a, .item a, h3 a')[:NUM_TRUYEN_QUET]
         for item in items:
             try:
                 title = item.get('title') or item.text.strip()
+                if not title:
+                    continue
                 link = BASE_URL + item['href'] if item['href'].startswith('/') else item['href']
                 stories.append({'title': title, 'link': link})
-                print(f"Tìm thấy: {title}")
+                print(f"Tìm thấy truyện: {title}")
             except Exception as e:
                 print(f"Lỗi item: {e}")
                 continue
@@ -41,37 +49,46 @@ def get_hot_stories():
 def scrape_story_detail(url):
     """Scrape chi tiết 1 truyện + chapter mới nhất – selector thực tế"""
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.8',
+        'Connection': 'keep-alive',
     }
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, timeout=15)
         res.raise_for_status()
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # Selector thực tế cho title, author, desc, cover
-        title_elem = soup.find("h1", class_="title-detail") or soup.find("h1")
+        # Selector thực tế cho title
+        title_elem = soup.find("h1", class_="title-detail") or soup.find("h1") or soup.find("title")
         title = title_elem.text.strip() if title_elem else "Không có tên"
-        story_id = "".join(c for c in title.lower() if c.isalnum())
+        story_id = re.sub(r'[^a-z0-9]', '', title.lower())
 
-        author_elem = soup.find("li", string="Tác giả:") or soup.find("span", class_="author")
+        # Author
+        author_elem = soup.find("li", string=re.compile("Tác giả")) or soup.find("span", class_="author")
         author = author_elem.find_next("a").text.strip() if author_elem else "Không rõ"
 
-        desc_elem = soup.find("div", class_="detail-content") or soup.find("p", class_="desc")
+        # Description
+        desc_elem = soup.find("div", class_="detail-content") or soup.find("p", class_="desc") or soup.find("div", class_="summary")
         desc = desc_elem.get_text(strip=True)[:500] + "..." if desc_elem else "Chưa có tóm tắt"
 
-        cover_elem = soup.find("div", class_="col-image") or soup.find("img", class_="cover")
-        cover = cover_elem["src"] if cover_elem else ""
+        # Cover
+        cover_elem = soup.find("div", class_="col-image") or soup.find("img", class_="cover") or soup.find("img", alt=re.compile(title))
+        cover = cover_elem["src"] if cover_elem and cover_elem.get("src") else ""
 
-        # Chapter mới nhất
-        latest_chap = soup.find("a", class_="chapter-row") or soup.find("a", class_="chapter")
-        chap_name = latest_chap.text.strip() if latest_chap else "Chapter mới"
-        chap_url = BASE_URL + latest_chap["href"] if latest_chap else ""
+        # Latest chapter
+        latest_chap = soup.find("a", class_="chapter-row") or soup.find("a", class_="chapter") or soup.find("li", class_="chapter")
+        if not latest_chap:
+            print("Không tìm thấy chapter")
+            return None
+        chap_name = latest_chap.text.strip()
+        chap_url = BASE_URL + latest_chap["href"] if latest_chap["href"].startswith('/') else latest_chap["href"]
 
         time.sleep(DELAY)
-        ch_res = requests.get(chap_url, headers=headers, timeout=10)
+        ch_res = requests.get(chap_url, headers=headers, timeout=15)
         ch_soup = BeautifulSoup(ch_res.text, 'html.parser')
         images = []
-        for img in ch_soup.find_all("img", class_="page-break") or ch_soup.find_all("img", class_="page"):
+        for img in ch_soup.find_all("img", class_="page-break") or ch_soup.find_all("img", class_="page") or ch_soup.find_all("img", class_="chapter-img"):
             src = img.get("src") or img.get("data-src") or img.get("data-original")
             if src and src.startswith("http"):
                 images.append(src)
@@ -118,7 +135,7 @@ def update_stories(new_data):
     with open("stories.json", "w", encoding="utf-8") as f:
         json.dump(stories, f, ensure_ascii=False, indent=2)
 
-# MAIN – Tự động quét và cập nhật
+# MAIN – Quét và cập nhật
 if __name__ == "__main__":
     print("Bot bắt đầu quét nettruyen0209.com...")
     hot_list = get_hot_stories()
@@ -130,4 +147,4 @@ if __name__ == "__main__":
             update_stories(data)
         time.sleep(DELAY)
 
-    print("Bot hoàn thành – đã cập nhật stories.json!")
+    print("Bot hoàn thành – cập nhật stories.json!")
