@@ -3,7 +3,7 @@ name: Auto Scraper
 on:
   schedule:
     - cron: "*/30 * * * *"   # chạy mỗi 30 phút
-  workflow_dispatch:          # cho phép chạy thủ công
+  workflow_dispatch:
 
 jobs:
   scraper:
@@ -25,5 +25,4 @@ jobs:
           pip install requests beautifulsoup4 lxml GitPython
 
       - name: Run scraper
-        run: |
-          python scraper_optimized.py
+        run: python scraper_optimized.py
