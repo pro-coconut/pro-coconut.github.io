@@ -107,6 +107,7 @@ def scrape_story(story_url, existing_chapters=None):
 def push_to_github():
     repo = Repo(".")
     remote = repo.remote(name="origin")
+
     # Sửa URL remote để dùng token
     token_url = f"https://{GITHUB_TOKEN}@github.com/pro-coconut/pro-coconut.github.io.git"
     remote.set_url(token_url)
@@ -114,7 +115,7 @@ def push_to_github():
     repo.git.add(STORIES_FILE)
     repo.index.commit("Update stories.json via bot")
     remote.push()
-    print("[INFO] stories.json pushed to GitHub successfully!")
+    print("[INFO] stories.json pushed successfully!")
 
 # ----------------------------
 # RUN SCRAPER
