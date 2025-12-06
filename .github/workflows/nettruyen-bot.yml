@@ -32,13 +32,13 @@ jobs:
           STORIES_PER_RUN: 3
         run: python -u scraper.py
 
-      - name: Commit posted.json
+      - name: Commit stories.json
         run: |
           if [[ -n "$(git status --porcelain)" ]]; then
             git config --local user.email "actions@github.com"
             git config --local user.name "GitHub Actions"
-            git add posted.json
-            git commit -m "update posted list"
+            git add stories.json
+            git commit -m "update stories list"
             git push
           else
             echo "No changes."
