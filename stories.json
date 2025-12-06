@@ -1,1 +1,16 @@
-[]
+[
+  {
+    "id": "test",
+    "title": "Test",
+    "author": "Không rõ",
+    "thumbnail": "https://raw.githubusercontent.com/pro-coconut/pro-coconut.github.io/main/images/test_cover.jpg",
+    "chapters": [
+      {
+        "name": "Chapter 1",
+        "images": [
+          "https://raw.githubusercontent.com/pro-coconut/pro-coconut.github.io/main/images/test_p1.jpg"
+        ]
+      }
+    ]
+  }
+]
