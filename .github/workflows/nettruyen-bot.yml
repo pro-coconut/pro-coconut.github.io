@@ -2,35 +2,43 @@ name: NetTruyen Scraper Bot
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
-  workflow_dispatch:
+    - cron: "*/30 * * * *"   # chạy mỗi 30 phút
+  workflow_dispatch:         # cho phép chạy tay
 
 jobs:
   scrape-and-update:
     runs-on: ubuntu-latest
+    timeout-minutes: 7       # tránh kẹt >10 phút
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests beautifulsoup4 lxml
+        run: |
+          pip install requests beautifulsoup4 lxml
 
-      - name: Run scraper
+      - name: Show environment
+        run: |
+          echo "API_BASE_URL = ${{ secrets.API_BASE_URL }}"
+          echo "MAX_PAGES = ${{ secrets.MAX_PAGES }}"
+
+      - name: Run scraper bot
         env:
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
-          MAX_PAGES: 20
-        run: python scraper.py
+          MAX_PAGES: ${{ secrets.MAX_PAGES }}
+        run: |
+          python scraper.py
 
       - name: Commit posted.json
         run: |
           git config --global user.email "bot@github.com"
           git config --global user.name "Auto Bot"
-          git add posted.json
+          git add posted.json || true
           git commit -m "update posted list" || echo "No changes"
           git push
