@@ -4,11 +4,11 @@ import time
 import requests
 from bs4 import BeautifulSoup
 from git import Repo
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ----------------------------
 # CONFIG
 # ----------------------------
-# Lấy token từ secret workflow
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN_BOT")
 if not GITHUB_TOKEN:
     raise ValueError("Missing GitHub token! Set secret MY_GITHUB_TOKEN and map to GITHUB_TOKEN_BOT in workflow.")
@@ -21,6 +21,7 @@ START_PAGE = 1
 MAX_PAGES = 5
 STORIES_PER_RUN = 3
 MAX_CHAPTERS_PER_RUN = 50
+MAX_WORKERS = 5  # số luồng scrape chapter song song
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -33,12 +34,12 @@ HEADERS = {
 def safe_get(url):
     for _ in range(4):
         try:
-            r = requests.get(url, headers=HEADERS, timeout=12)
+            r = requests.get(url, headers=HEADERS, timeout=10)
             if r.status_code == 200:
                 return r
-            time.sleep(2)
-        except:
-            time.sleep(2)
+        except Exception as e:
+            print(f"WARNING request error: {e} for {url}")
+        time.sleep(1)
     return None
 
 def scrape_chapter(url):
@@ -82,6 +83,7 @@ def scrape_story(story_url, existing_chapters=None):
     thumbnail = thumb_tag.get("src") if thumb_tag else ""
     story_id = story_url.rstrip("/").split("/")[-1]
 
+    # Lấy max chapter
     chapter_links = soup.select("div.list-chapter a")
     max_chapter = 0
     for a in chapter_links:
@@ -94,6 +96,7 @@ def scrape_story(story_url, existing_chapters=None):
             except:
                 continue
 
+    # Xác định chapter bắt đầu
     start_chapter = 1
     if existing_chapters:
         scraped_nums = [int(c["name"].replace("Chapter","").strip()) for c in existing_chapters if c["name"].lower().startswith("chapter")]
@@ -104,12 +107,25 @@ def scrape_story(story_url, existing_chapters=None):
         return {"id": story_id, "title": title, "author": author, "description": description, "thumbnail": thumbnail, "chapters":[]}
 
     chapters = []
-    for i in range(start_chapter, end_chapter+1):
+
+    def fetch_chapter(i):
         chapter_url = f"{full_url}/chapter-{i}"
+        print(f"Scraping {title} - Chapter {i}")
         imgs = scrape_chapter(chapter_url)
         if imgs:
-            chapters.append({"name": f"Chapter {i}", "images": imgs})
-        time.sleep(0.5)
+            return {"name": f"Chapter {i}", "images": imgs}
+        return None
+
+    # Multi-thread scrape chapter
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(fetch_chapter, i) for i in range(start_chapter, end_chapter+1)]
+        for fut in as_completed(futures):
+            result = fut.result()
+            if result:
+                chapters.append(result)
+
+    # Sort chapters
+    chapters.sort(key=lambda x:int(x["name"].replace("Chapter","").strip()))
 
     return {"id": story_id, "title": title, "author": author, "description": description, "thumbnail": thumbnail, "chapters": chapters}
 
@@ -153,7 +169,11 @@ def run_scraper():
                 continue
             if story_id in story_dict:
                 story_dict[story_id]["chapters"].extend(story_data["chapters"])
-                story_dict[story_id]["chapters"].sort(key=lambda x:int(x["name"].replace("Chapter","").strip()))
+                # loại trùng chapter
+                unique = {}
+                for c in story_dict[story_id]["chapters"]:
+                    unique[c["name"]] = c
+                story_dict[story_id]["chapters"] = sorted(unique.values(), key=lambda x:int(x["name"].replace("Chapter","").strip()))
             else:
                 story_dict[story_id] = story_data
             save_stories(list(story_dict.values()))
