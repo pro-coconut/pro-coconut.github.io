@@ -20,13 +20,11 @@ POSTED_FILE = "posted.json"
 def load_posted():
     if not os.path.exists(POSTED_FILE):
         return []
-    with open(POSTED_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    return json.load(open(POSTED_FILE, "r", encoding="utf-8"))
 
 
 def save_posted(lst):
-    with open(POSTED_FILE, "w", encoding="utf-8") as f:
-        json.dump(lst, f, indent=2, ensure_ascii=False)
+    json.dump(lst, open(POSTED_FILE, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
 
 
 # ==============================
@@ -39,7 +37,7 @@ def get_story_links():
 
     for page in range(START_PAGE, MAX_PAGES + 1):
         url = LIST_URL.format(page=page)
-        print(f"📄 Checking page {page}: {url}")
+        print(f"\n📄 Checking page {page}: {url}")
 
         try:
             html = requests.get(url, timeout=10).text
@@ -47,23 +45,31 @@ def get_story_links():
             print("❌ Failed to load page")
             continue
 
-        soup = BeautifulSoup(html, "lxml")
-        items = soup.select("div.item figure a")
+        soup = BeautifulSoup(html, "html.parser")
+
+        # FIX selector mới của nettruyen0209
+        items = soup.select("div.item > a, div.item a.image")
 
         if not items:
             print("⚠ No more items → stop scan")
             break
 
+        added = 0
         for a in items:
             link = a.get("href")
+            if not link:
+                continue
             if link.startswith("/"):
                 link = DOMAIN + link
+            if DOMAIN not in link:
+                continue
             links.append(link)
+            added += 1
 
-        print(f"➕ Added {len(items)} links from page {page}")
-        time.sleep(0.5)
+        print(f"➕ Added {added} links from page {page}")
+        time.sleep(0.2)
 
-    print(f"🎉 TOTAL LINKS: {len(links)}")
+    print(f"\n🎉 TOTAL LINKS: {len(links)}")
     return links
 
 
@@ -71,6 +77,7 @@ def get_story_links():
 # Scrap chapter images
 # ==============================
 def scrape_chapter_images(url):
+    # FIX URL sai dạng "/manga/..."
     if url.startswith("/"):
         url = DOMAIN + url
 
@@ -80,15 +87,16 @@ def scrape_chapter_images(url):
         print("❌ Error loading chapter:", url)
         return []
 
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(html, "html.parser")
 
     imgs = []
     for img in soup.select(".page-chapter img"):
         src = img.get("data-src") or img.get("src")
-        if src:
-            if src.startswith("//"):
-                src = "https:" + src
-            imgs.append(src)
+        if not src:
+            continue
+        if src.startswith("//"):
+            src = "https:" + src
+        imgs.append(src)
 
     return imgs
 
@@ -106,7 +114,7 @@ def scrape_story(url):
         print("❌ Cannot load story URL")
         return None
 
-    soup = BeautifulSoup(html, "lxml")
+    soup = BeautifulSoup(html, "html.parser")
 
     title = soup.select_one(".title-detail")
     title = title.text.strip() if title else "No Title"
@@ -120,7 +128,7 @@ def scrape_story(url):
     chapters = []
     ch_nodes = soup.select(".list-chapter li a")
 
-    for c in ch_nodes:
+    for c in ch_nodes[::-1]:  # ASC order
         ch_name = c.text.strip()
         ch_url = c.get("href")
 
