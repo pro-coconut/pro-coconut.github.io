@@ -1,35 +1,31 @@
 name: NetTruyen Auto Scraper Bot
 on:
   schedule:
-    - cron: '*/30 * * * *'    # Chạy mỗi 30 phút – an toàn, không bị khóa
-  workflow_dispatch:          # Cho phép chạy thủ công
+    - cron: '*/30 * * * *'   # chạy mỗi 30 phút
+  workflow_dispatch:
 
 jobs:
   scrape-and-update:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install requests beautifulsoup4 lxml
+    - name: Install dependencies
+      run: pip install requests beautifulsoup4 lxml
 
-      - name: Tạo thư mục images (nếu chưa có)
-        run: mkdir -p images
+    - name: Run scraper
+      run: python scraper.py
 
-      - name: Chạy bot quét NetTruyen0209
-        run: python scraper.py
-
-      - name: Commit & Push (đã fix hoàn toàn lỗi đỏ)
-        run: |
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
-          git add stories.json images/ || echo "Không có file nào để add"
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Bot: Cập nhật truyện mới từ NetTruyen0209 $(date +'%H:%M')" && git push) || echo "Không có thay đổi để commit"
+    - name: Commit & Push changes
+      run: |
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git config --global user.name "github-actions[bot]"
+        git add stories.json || echo "No changes"
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Bot update $(date +'%H:%M')" && git push)
