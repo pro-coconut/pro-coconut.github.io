@@ -3,48 +3,62 @@ from bs4 import BeautifulSoup
 import json
 import os
 import time
+import re
 from urllib.parse import quote
 
 # Cấu hình
 BASE_URL = "https://nettruyen0209.com"
 DELAY = 4  # Delay an toàn
-NUM_TRUYEN_QUET = 10  # Quét 10 truyện từ trang chủ
+NUM_TRUYEN_QUET = 15  # Quét 15 truyện từ trang chủ + phân trang
 
-def get_hot_stories():
-    """Quét trang chủ (/) lấy danh sách 10 truyện mới/hot nhất – selector thực tế"""
-    url = BASE_URL + "/"  # Trang chủ thay vì /truyen-hot (vì 404)
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.8',
-        'Connection': 'keep-alive',
-    }
-    try:
-        res = requests.get(url, headers=headers, timeout=15)
-        res.raise_for_status()
-        soup = BeautifulSoup(res.text, 'html.parser')
-        
-        stories = []
-        # Selector thực tế: quét từ trang chủ, dùng .story-item, .manga-item, hoặc a[href*="/manga/"]
-        items = soup.select('.story-item a[href*="/manga/"], .manga-item a[href*="/manga/"], .item a[href*="/manga/"], h3 a[href*="/manga/"]')[:NUM_TRUYEN_QUET]
-        for item in items:
-            try:
-                title = item.get('title') or item.text.strip()
-                if not title or len(title) < 5:
+def get_all_stories():
+    """Quét trang chủ (/) + phân trang để lấy danh sách truyện – tránh 404"""
+    stories = []
+    page = 1
+    while len(stories) < NUM_TRUYEN_QUET:
+        url = f"{BASE_URL}/?page={page}"  # Quét trang chủ với phân trang (trang 1, 2, 3...)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'vi-VN,vi;q=0.9,en;q=0.8',
+            'Connection': 'keep-alive',
+        }
+        try:
+            res = requests.get(url, headers=headers, timeout=15)
+            if res.status_code == 404:
+                print(f"Trang {page} không tồn tại, dừng quét")
+                break
+            res.raise_for_status()
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            items = soup.select('.story-item a[href*="/manga/"], .manga-item a, .item a, h3 a, li a')[:5]  # 5/trang
+            if not items:
+                print(f"Không có truyện ở trang {page}, dừng quét")
+                break
+            
+            for item in items:
+                try:
+                    title = item.get('title') or item.text.strip()
+                    if not title or len(title) < 5:
+                        continue
+                    link = BASE_URL + item['href'] if item['href'].startswith('/') else item['href']
+                    stories.append({'title': title, 'link': link})
+                    print(f"Tìm thấy: {title}")
+                except Exception as e:
+                    print(f"Lỗi item: {e}")
                     continue
-                link = BASE_URL + item['href'] if item['href'].startswith('/') else item['href']
-                stories.append({'title': title, 'link': link})
-                print(f"Tìm thấy: {title}")
-            except Exception as e:
-                print(f"Lỗi item: {e}")
-                continue
-        return stories if stories else []
-    except Exception as e:
-        print(f"Lỗi quét trang chủ: {e}")
-        return []
+            
+            page += 1
+            time.sleep(DELAY)
+        except Exception as e:
+            print(f"Lỗi quét trang {page}: {e}")
+            break
+    
+    print(f"Tổng quét được {len(stories)} truyện từ trang chủ + phân trang")
+    return stories
 
 def scrape_story_detail(url):
-    """Scrape chi tiết 1 truyện + chapter mới nhất – selector thực tế"""
+    """Scrape chi tiết 1 truyện + chapter mới nhất"""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -56,10 +70,10 @@ def scrape_story_detail(url):
         res.raise_for_status()
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # Selector thực tế cho title
+        # Title
         title_elem = soup.find("h1", class_="title-detail") or soup.find("h1") or soup.find("title")
         title = title_elem.text.strip() if title_elem else "Không có tên"
-        story_id = "".join(c for c in title.lower() if c.isalnum())
+        story_id = re.sub(r'[^a-z0-9]', '', title.lower())
 
         # Author
         author_elem = soup.find("li", string=re.compile("Tác giả")) or soup.find("span", class_="author") or soup.find("div", class_="author")
@@ -70,8 +84,8 @@ def scrape_story_detail(url):
         desc = desc_elem.get_text(strip=True)[:500] + "..." if desc_elem else "Chưa có tóm tắt"
 
         # Cover
-        cover_elem = soup.find("div", class_="col-image") or soup.find("img", class_="cover") or soup.find("img", alt=re.compile(title))
-        cover = cover_elem.get("src") if cover_elem else ""
+        cover_elem = soup.find("div", class_="col-image") or soup.find("img", class_="cover") or soup.find("img", alt=re.compile(title, re.I))
+        cover = cover_elem.get("src") if cover_elem and cover_elem.get("src") else ""
 
         # Latest chapter
         latest_chap = soup.find("a", class_="chapter-row") or soup.find("a", class_="chapter") or soup.find("li", class_="chapter")
@@ -132,11 +146,11 @@ def update_stories(new_data):
     with open("stories.json", "w", encoding="utf-8") as f:
         json.dump(stories, f, ensure_ascii=False, indent=2)
 
-# MAIN
+# MAIN – Quét từ trang chủ + phân trang
 if __name__ == "__main__":
     print("Bot bắt đầu quét nettruyen0209.com...")
-    hot_list = get_hot_stories()
-    print(f"Tìm thấy {len(hot_list)} truyện hot")
+    hot_list = get_all_stories()
+    print(f"Tìm thấy {len(hot_list)} truyện từ trang chủ + phân trang")
 
     for item in hot_list:
         data = scrape_story_detail(item["link"])
