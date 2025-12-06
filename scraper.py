@@ -1,264 +1,171 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Robust scraper with verbose logging, retries, timeouts, and safe failure.
-Designed for GitHub Actions.
-"""
 import os
 import json
 import time
-import traceback
 import requests
 from bs4 import BeautifulSoup
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
-# ----------------- Config -----------------
-API_BASE = os.getenv("API_BASE_URL", "").rstrip("/")
-MAX_PAGES = int(os.getenv("MAX_PAGES", "5"))   # <- default small for testing
-STORIES_PER_RUN = int(os.getenv("STORIES_PER_RUN", "3"))
-START_PAGE = int(os.getenv("START_PAGE", "3"))
-DOMAIN = "https://nettruyen0209.com"
-LIST_URL = DOMAIN + "/danh-sach-truyen/{page}/?sort=last_update&status=0"
-POSTED_FILE = "posted.json"
+API_BASE_URL = os.getenv("API_BASE_URL")
+START_PAGE = int(os.getenv("START_PAGE", 1))
+STORIES_PER_RUN = int(os.getenv("STORIES_PER_RUN", 3))
+MAX_PAGES = int(os.getenv("MAX_PAGES", 20))
+BATCH_SIZE = 5  # batch chapter per API call
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-    "Accept-Language": "vi-VN,vi;q=0.9,en;q=0.8"
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "*/*",
 }
 
-# ----------------- Session + Retry -----------------
-session = requests.Session()
-retry = Retry(total=3, backoff_factor=0.4, status_forcelist=(429, 500, 502, 503, 504))
-session.mount("https://", HTTPAdapter(max_retries=retry))
-session.mount("http://", HTTPAdapter(max_retries=retry))
+POSTED_FILE = "posted.json"
 
-
-# ----------------- Helpers -----------------
-def log(msg):
-    print(msg, flush=True)
-
-
-def safe_get(url, timeout=10):
-    try:
-        r = session.get(url, headers=HEADERS, timeout=timeout)
-        r.raise_for_status()
-        return r
-    except Exception as e:
-        log(f"[GET ERROR] {url} -> {e}")
-        return None
-
-
-def safe_post(url, json_payload, timeout=15):
-    try:
-        r = session.post(url, json=json_payload, timeout=timeout)
-        r.raise_for_status()
-        return r
-    except Exception as e:
-        log(f"[POST ERROR] {url} -> {e}")
-        return None
-
-
-# ----------------- File helpers -----------------
-def ensure_posted_file():
-    if not os.path.exists(POSTED_FILE):
-        with open(POSTED_FILE, "w", encoding="utf-8") as f:
-            json.dump([], f, ensure_ascii=False, indent=2)
-
+# --------------------------------
+# Utilities
+# --------------------------------
 
 def load_posted():
-    ensure_posted_file()
-    try:
-        with open(POSTED_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+    if not os.path.exists(POSTED_FILE):
         return []
+    with open(POSTED_FILE, "r", encoding="utf8") as f:
+        return json.load(f)
 
+def save_posted(data):
+    with open(POSTED_FILE, "w", encoding="utf8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
-def save_posted(lst):
-    with open(POSTED_FILE, "w", encoding="utf-8") as f:
-        json.dump(lst, f, ensure_ascii=False, indent=2)
+def safe_get(url):
+    """Request an URL with retry + timeout."""
+    for i in range(5):
+        try:
+            r = requests.get(url, headers=HEADERS, timeout=15)
+            if r.status_code == 200:
+                return r
+            time.sleep(2)
+        except:
+            time.sleep(2)
+    return None
 
+# --------------------------------
+# Scrape chapter content
+# --------------------------------
 
-# ----------------- Scraping functions -----------------
-def get_story_links(limit):
-    log("=== START: collect story links ===")
-    links = []
-    for page in range(START_PAGE, START_PAGE + MAX_PAGES):
-        if len(links) >= limit:
-            break
-        url = LIST_URL.format(page=page)
-        log(f"Scanning page {page}: {url}")
-        r = safe_get(url)
-        if not r:
-            log(f"  - failed to fetch page {page}, skipping")
-            time.sleep(0.5)
-            continue
-        soup = BeautifulSoup(r.text, "lxml")
-        # selector tuned to your site
-        items = soup.select("div.item figure a")
-        if not items:
-            log(f"  - no items found on page {page}, stop scanning pages")
-            break
-        for a in items:
-            if len(links) >= limit:
-                break
-            href = a.get("href")
-            if not href:
-                continue
-            if href.startswith("/"):
-                href = DOMAIN + href
-            # normalize
-            if not href.startswith("http"):
-                href = DOMAIN + href
-            links.append(href)
-        log(f"  + collected {len(items)} links (total {len(links)})")
-        time.sleep(0.2)
-    log(f"=== FINISH: collected {len(links)} links ===")
-    return links
-
-
-def scrape_chapter_images(chap_url):
-    if chap_url.startswith("/"):
-        chap_url = DOMAIN + chap_url
-    r = safe_get(chap_url)
-    if not r:
-        return []
-    soup = BeautifulSoup(r.text, "lxml")
-    imgs = []
-    # try multiple selectors
-    selectors = [".page-chapter img", ".reading-detail img", ".chapter-content img", "img"]
-    for sel in selectors:
-        for img in soup.select(sel):
-            src = img.get("data-src") or img.get("src") or img.get("data-original")
-            if not src:
-                continue
-            if src.startswith("//"):
-                src = "https:" + src
-            if src.startswith("/"):
-                src = DOMAIN + src
-            if src not in imgs:
-                imgs.append(src)
-        if imgs:
-            break
-    log(f"    -> images found: {len(imgs)}")
-    return imgs
-
-
-def scrape_story(url):
-    log(f"\n=== SCRAPE STORY: {url} ===")
+def scrape_chapter(url):
     r = safe_get(url)
     if not r:
-        log("  ! cannot load story page")
-        return None
+        return []
+
     soup = BeautifulSoup(r.text, "lxml")
-    title_el = soup.select_one(".title-detail") or soup.select_one("h1")
-    title = title_el.get_text(strip=True) if title_el else "No Title"
-    cover_el = soup.select_one(".detail-info img") or soup.select_one(".col-image img")
-    cover = cover_el.get("src") if cover_el else ""
-    desc_el = soup.select_one(".detail-content p") or soup.select_one(".summary")
-    description = desc_el.get_text(strip=True) if desc_el else ""
-    # chapters list
-    ch_nodes = soup.select(".list-chapter li a") or soup.select("ul.row-content-chapter li a") or soup.select(".chapter-list a")
+    imgs = soup.select("div.page-chapter > img")
+
+    return [img.get("src") for img in imgs if img.get("src")]
+
+# --------------------------------
+# Scrape story (multiple chapters)
+# --------------------------------
+
+def scrape_story(story_url):
+    r = safe_get(story_url)
+    if not r:
+        return None
+
+    soup = BeautifulSoup(r.text, "lxml")
+    title = soup.select_one("h1.title-detail").text.strip()
+
+    chapter_links = [
+        a["href"] for a in soup.select("ul.list-chapter a")
+        if a.get("href")
+    ]
+
     chapters = []
-    # reverse to get chap1..chapN if site lists newest first
-    ch_nodes = ch_nodes[::-1]
-    for c in ch_nodes:
-        name = c.get_text(strip=True)
-        href = c.get("href")
-        if not href:
-            continue
-        if href.startswith("/"):
-            href = DOMAIN + href
-        imgs = scrape_chapter_images(href)
-        chapters.append({"chapter": name, "images": imgs})
-        # small sleep to be polite
-        time.sleep(0.12)
-    log(f"  -> story '{title}' scraped with {len(chapters)} chapters")
-    return {
-        "name": title,
-        "cover": cover,
-        "description": description,
-        "chapters": chapters
+    chapter_links = chapter_links[::-1]  # sort from old → new
+
+    for idx, ch_url in enumerate(chapter_links):
+        images = scrape_chapter(ch_url)
+        chapter_num = idx + 1
+
+        if len(images) <= 0:
+            continue  # skip lỗi
+
+        chapters.append({
+            "chapter": chapter_num,
+            "images": images,
+        })
+
+        time.sleep(2)
+
+    return title, chapters
+
+# --------------------------------
+# API Upload (batch)
+# --------------------------------
+
+def upload_batch(title, batch):
+    payload = {
+        "title": title,
+        "chapters": batch,
     }
 
-
-# ----------------- API helpers -----------------
-def upload_story(data):
-    if not API_BASE:
-        log("❌ ERROR: API_BASE_URL not set in secrets. Aborting upload.")
-        return False
-    url = API_BASE.rstrip("/") + "/api/stories/create"
-    log(f"Uploading to API: {url} (chapters={len(data.get('chapters', []))})")
-    r = safe_post(url, data)
-    if not r:
-        log("  -> upload failed (no response)")
-        return False
     try:
-        j = r.json()
-        ok = j.get("success") is True
-        log(f"  -> api returned success={ok} ; raw: {r.text}")
-        return ok
+        r = requests.post(
+            f"{API_BASE_URL}/api/stories/create",
+            json=payload,
+            timeout=20
+        )
+        if r.status_code == 413:
+            print("ERROR 413 — batch quá nặng → giảm batch size")
+            return False
+        print("API RESPONSE:", r.text)
+        return r.status_code == 200
     except Exception as e:
-        log(f"  -> invalid json response: {e}")
+        print("POST ERROR:", e)
         return False
 
+# --------------------------------
+# MAIN
+# --------------------------------
 
-# ----------------- Main -----------------
 def main():
-    start = time.time()
-    try:
-        log("=== BOT START ===")
-        # quick env print
-        log(f"ENV: API_BASE set? {'YES' if API_BASE else 'NO'}, MAX_PAGES={MAX_PAGES}, STORIES_PER_RUN={STORIES_PER_RUN}")
-        ensure = ensure_posted_file if 'ensure_posted_file' in globals() else None
-        # ensure posted file exists:
-        if not os.path.exists(POSTED_FILE):
-            save_posted([])
+    posted = load_posted()
+    found_count = 0
 
-        posted = load_posted()
-        # collect only needed links (limit = STORIES_PER_RUN * 2 for buffer)
-        links = get_story_links(limit=STORIES_PER_RUN * 3)
-        if not links:
-            log("No links found → exit")
-            return
+    for page in range(START_PAGE, MAX_PAGES + 1):
+        url = f"https://nettruyen0209.com/?page={page}"
+        r = safe_get(url)
+        if not r:
+            continue
 
-        # remove already posted
-        candidates = [l for l in links if l not in posted]
-        log(f"Candidates for upload: {len(candidates)}")
+        soup = BeautifulSoup(r.text, "lxml")
+        links = [a["href"] for a in soup.select("div.item > a")]
 
-        uploaded = 0
-        for link in candidates:
-            if uploaded >= STORIES_PER_RUN:
-                break
-            try:
-                st = scrape_story(link)
-                if not st:
-                    continue
-                # prepare payload (format kiểu 1)
-                payload = {
-                    "name": st["name"],
-                    "cover": st["cover"],
-                    "description": st["description"],
-                    "chapters": st["chapters"]
-                }
-                ok = upload_story(payload)
-                if ok:
-                    posted.append(link)
-                    save_posted(posted)
-                    uploaded += 1
-                else:
-                    log("Upload not successful; skipping to next story")
-                # small pause between stories
-                time.sleep(0.5)
-            except Exception:
-                log("Exception while processing story:")
-                traceback.print_exc()
-        log(f"=== DONE: uploaded {uploaded} stories in {time.time()-start:.1f}s ===")
-    except Exception:
-        log("Fatal exception in main:")
-        traceback.print_exc()
+        for story in links:
+            if story in posted:
+                continue
 
+            print(f"\n=== SCRAPE STORY: {story} ===")
+
+            title, all_chapters = scrape_story(story)
+            if not all_chapters:
+                print("No chapter scraped, skip.")
+                continue
+
+            # Batch upload
+            for i in range(0, len(all_chapters), BATCH_SIZE):
+                batch = all_chapters[i:i + BATCH_SIZE]
+                ok = upload_batch(title, batch)
+                if not ok:
+                    print("Batch upload failed – skipping story.")
+                    break
+
+            # Mark as posted
+            posted.append(story)
+            save_posted(posted)
+
+            found_count += 1
+            if found_count >= STORIES_PER_RUN:
+                print("Reached limit. DONE.")
+                return
+
+            time.sleep(3)
+
+    print("DONE.")
 
 if __name__ == "__main__":
     main()
