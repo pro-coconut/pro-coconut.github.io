@@ -1,17 +1,11 @@
 {
-  "name": "manga-scraper",
+  "name": "comic-scraper",
   "version": "1.0.0",
-  "description": "Scraper for manga and auto push to GitHub",
+  "description": "Scraper truyện tranh NetTruyen tự động push lên GitHub",
   "main": "scraper.js",
   "type": "module",
-  "scripts": {
-    "start": "node scraper.js"
-  },
   "dependencies": {
-    "manga-lib": "1.1.2",
-    "puppeteer": "^24.15.0"
-  },
-  "engines": {
-    "node": ">=20.18.1"
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12"
   }
 }
