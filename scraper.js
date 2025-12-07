@@ -1,102 +1,85 @@
+import axios from "axios";
+import cheerio from "cheerio";
 import fs from "fs";
-import { execSync } from "child_process";
-import story from "manga-lib";
 
-// ==== CẤU HÌNH ====
 const START_PAGE = 4;
 const END_PAGE = 14;
 const STORIES_FILE = "./stories.json";
 
-const TOKEN = process.env.TOKEN;
-const USERNAME = process.env.USERNAME;
-const REPO = process.env.REPO;
-const BRANCH = process.env.BRANCH;
-
-// ==== HÀM LẤY DANH SÁCH TRUYỆN ====
+// Lấy danh sách truyện từ 1 page
 async function fetchStoryList(page) {
+  const url = `https://nettruyen0209.com/danh-sach-truyen/${page}/?sort=last_update&status=0`;
   try {
-    const list = await story.fetchList({
-      page,
-      status: 0,
-      sort: "last_update"
+    const res = await axios.get(url);
+    const $ = cheerio.load(res.data);
+    const links = [];
+    $(".col-truyen-list .list-truyen-item a").each((i, el) => {
+      const href = $(el).attr("href");
+      if (href) links.push(href);
     });
-    return list || [];
+    return links;
   } catch (e) {
-    console.log(`[WARN] Failed page ${page}: ${e}`);
+    console.warn(`[WARN] Failed page ${page}: ${e.message}`);
     return [];
   }
 }
 
-// ==== HÀM LẤY CHI TIẾT TRUYỆN ====
-async function fetchStoryData(url) {
+// Lấy thông tin chi tiết 1 truyện
+async function fetchStoryData(storyUrl) {
   try {
-    const data = await story.fetchStory({ url });
-    const chapters = [];
+    const res = await axios.get(storyUrl);
+    const $ = cheerio.load(res.data);
 
-    for (let i = 1; i <= data.totalChapter; i++) {
+    const title = $("h1.title-detail").text().trim() || "Không rõ";
+    const author = $(".author span").text().trim() || "Không rõ";
+    const description = $(".summary_content").text().trim() || "";
+    const slug = storyUrl.split("/").filter(Boolean).pop();
+    const thumbnail = $(".info-image img").attr("src") || "";
+
+    // Lấy chapters (giả lập từ chapter 1 → 100)
+    const chapters = [];
+    for (let i = 1; i <= 100; i++) {
+      const chapUrl = `${storyUrl}/chapter-${i}`;
       try {
-        const imgs = await story.fetchChapter({
-          url,
-          chapter: i
+        const chapRes = await axios.get(chapUrl);
+        const $$ = cheerio.load(chapRes.data);
+        const imgs = [];
+        $$(".reading-detail img").each((j, img) => {
+          const src = $$(img).attr("data-src") || $$(img).attr("src");
+          if (src) imgs.push(src);
         });
-        chapters.push({
-          name: `Chapter ${i}`,
-          images: imgs
-        });
-      } catch {}
+        if (imgs.length > 0) {
+          chapters.push({ name: `Chapter ${i}`, images: imgs });
+        } else {
+          break;
+        }
+      } catch {
+        break;
+      }
     }
 
-    return {
-      id: data.slug,
-      title: data.title,
-      author: data.author || "Không rõ",
-      description: data.description || "",
-      thumbnail: data.thumbnail || "",
-      chapters
-    };
+    return { id: slug, title, author, description, thumbnail, chapters };
   } catch (e) {
-    console.log(`[WARN] Failed story ${url}: ${e}`);
+    console.warn(`[WARN] Failed ${storyUrl}: ${e.message}`);
     return null;
   }
 }
 
-// ==== HÀM LƯU JSON ====
-function saveStories(data) {
-  fs.writeFileSync(STORIES_FILE, JSON.stringify(data, null, 2), "utf-8");
-  console.log(`Saved ${data.length} stories to ${STORIES_FILE}`);
-}
-
-// ==== HÀM PUSH GITHUB ====
-function pushToGitHub() {
-  try {
-    execSync(`git config --global user.name "${USERNAME}"`);
-    execSync(`git config --global user.email "actions@github.com"`);
-    execSync(`git add ${STORIES_FILE}`);
-    execSync(`git commit -m "Update stories.json" || echo "No changes"`);
-    execSync(`git push https://${TOKEN}@github.com/${USERNAME}/${REPO}.git ${BRANCH}`);
-    console.log("Pushed to GitHub successfully!");
-  } catch (e) {
-    console.log("Failed to push to GitHub:", e.message);
-  }
-}
-
-// ==== CHẠY SCRAPER ====
 async function runScraper() {
   const allStories = [];
 
   for (let page = START_PAGE; page <= END_PAGE; page++) {
     console.log(`Fetching list page: ${page}`);
-    const list = await fetchStoryList(page);
-
-    for (const item of list) {
-      console.log(`Scraping ${item.url}`);
-      const storyData = await fetchStoryData(item.url);
-      if (storyData) allStories.push(storyData);
+    const storyLinks = await fetchStoryList(page);
+    for (const link of storyLinks) {
+      console.log(`Scraping ${link}`);
+      const story = await fetchStoryData(link);
+      if (story) allStories.push(story);
     }
   }
 
-  saveStories(allStories);
-  pushToGitHub();
+  fs.writeFileSync(STORIES_FILE, JSON.stringify(allStories, null, 2), "utf-8");
+  console.log(`Saved ${allStories.length} stories to ${STORIES_FILE}`);
 }
 
 runScraper();
