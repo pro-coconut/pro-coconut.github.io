@@ -1,16 +1,17 @@
 {
   "name": "manga-scraper",
   "version": "1.0.0",
-  "description": "Scraper manga tự động lên GitHub Pages",
+  "description": "Scraper for manga and auto push to GitHub",
   "main": "scraper.js",
+  "type": "module",
   "scripts": {
     "start": "node scraper.js"
   },
   "dependencies": {
     "manga-lib": "1.1.2",
-    "puppeteer": "24.9.0"
+    "puppeteer": "^24.15.0"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=20.18.1"
   }
 }
