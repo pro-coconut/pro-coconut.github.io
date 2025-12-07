@@ -2,33 +2,26 @@ name: Manga Scraper
 
 on:
   schedule:
-    - cron: "*/30 * * * *" # chạy 30 phút/lần
-  workflow_dispatch: # cho phép chạy thủ công
+    - cron: "*/30 * * * *" # chạy mỗi 30 phút
+  workflow_dispatch:
 
 jobs:
-  scrape:
+  scraper:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 18
+          node-version: '18'
 
       - name: Install dependencies
         run: npm install
 
-      - name: Run Manga Scraper
+      - name: Run scraper
         run: npm start
-
-      - name: Commit and Push updated stories.json
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add stories.json
-          git commit -m "Update stories.json"
-          git push
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
