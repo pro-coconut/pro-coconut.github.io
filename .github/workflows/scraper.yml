@@ -1,31 +1,30 @@
-name: Manga Scraper
+name: Scrape manga and push
 
 on:
   schedule:
-    - cron: "*/30 * * * *" # chạy mỗi 30 phút
-  workflow_dispatch: # trigger thủ công
+    - cron: "*/30 * * * *"  # Chạy mỗi 30 phút
+  workflow_dispatch:
 
 jobs:
-  scrape:
+  scraper:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: "24" # Node >=24
-          cache: "npm"
-
-      - name: Clear npm cache
-        run: npm cache clean --force
+          node-version: 20
 
       - name: Install dependencies
-        run: |
-          npm install puppeteer@24.9.0
-          npm install manga-lib@1.1.2
+        run: npm install
 
       - name: Run scraper
+        env:
+          TOKEN: ${{ secrets.MY_PERSONAL_TOKEN }}
+          USERNAME: pro-coconut
+          REPO: pro-coconut.github.io
+          BRANCH: main
         run: node scraper.js
