@@ -1,99 +1,102 @@
-const { Manga } = require('manga-lib');
-const fs = require('fs');
-const { execSync } = require('child_process');
-const path = require('path');
+import fs from "fs";
+import { execSync } from "child_process";
+import story from "manga-lib";
 
 // ==== CẤU HÌNH ====
-const TOKEN = "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"; // token GitHub
-const USERNAME = "pro-coconut";
-const REPO_NAME = "pro-coconut.github.io";
-const BRANCH = "main";
-const REPO_URL = `https://${TOKEN}@github.com/${USERNAME}/${REPO_NAME}.git`;
-
 const START_PAGE = 4;
 const END_PAGE = 14;
-const STORIES_FILE = path.join(__dirname, 'stories.json');
+const STORIES_FILE = "./stories.json";
 
-// ==== HÀM SCRAPER TRUYỆN ====
-async function scrapeStory(storyUrl) {
-    try {
-        const story = new Manga(storyUrl);
-        await story.fetch();
-        return {
-            id: story.slug,
-            title: story.title,
-            author: story.author || "Không rõ",
-            description: story.description || "",
-            thumbnail: story.cover || "",
-            chapters: story.chapters.map(ch => ({
-                name: ch.title,
-                images: ch.pages
-            }))
-        };
-    } catch (e) {
-        console.warn(`[WARN] Failed ${storyUrl}: ${e}`);
-        return null;
-    }
+const TOKEN = process.env.TOKEN;
+const USERNAME = process.env.USERNAME;
+const REPO = process.env.REPO;
+const BRANCH = process.env.BRANCH;
+
+// ==== HÀM LẤY DANH SÁCH TRUYỆN ====
+async function fetchStoryList(page) {
+  try {
+    const list = await story.fetchList({
+      page,
+      status: 0,
+      sort: "last_update"
+    });
+    return list || [];
+  } catch (e) {
+    console.log(`[WARN] Failed page ${page}: ${e}`);
+    return [];
+  }
 }
 
-// ==== LẤY DANH SÁCH TRUYỆN TỪ NETTRUYEN ====
-async function fetchStoryList(page) {
-    const url = `https://nettruyen0209.com/danh-sach-truyen/${page}/?sort=last_update&status=0`;
-    const story = new Manga(url);
-    await story.fetchList();
-    return story.urls; // trả về array URL truyện
+// ==== HÀM LẤY CHI TIẾT TRUYỆN ====
+async function fetchStoryData(url) {
+  try {
+    const data = await story.fetchStory({ url });
+    const chapters = [];
+
+    for (let i = 1; i <= data.totalChapter; i++) {
+      try {
+        const imgs = await story.fetchChapter({
+          url,
+          chapter: i
+        });
+        chapters.push({
+          name: `Chapter ${i}`,
+          images: imgs
+        });
+      } catch {}
+    }
+
+    return {
+      id: data.slug,
+      title: data.title,
+      author: data.author || "Không rõ",
+      description: data.description || "",
+      thumbnail: data.thumbnail || "",
+      chapters
+    };
+  } catch (e) {
+    console.log(`[WARN] Failed story ${url}: ${e}`);
+    return null;
+  }
+}
+
+// ==== HÀM LƯU JSON ====
+function saveStories(data) {
+  fs.writeFileSync(STORIES_FILE, JSON.stringify(data, null, 2), "utf-8");
+  console.log(`Saved ${data.length} stories to ${STORIES_FILE}`);
+}
+
+// ==== HÀM PUSH GITHUB ====
+function pushToGitHub() {
+  try {
+    execSync(`git config --global user.name "${USERNAME}"`);
+    execSync(`git config --global user.email "actions@github.com"`);
+    execSync(`git add ${STORIES_FILE}`);
+    execSync(`git commit -m "Update stories.json" || echo "No changes"`);
+    execSync(`git push https://${TOKEN}@github.com/${USERNAME}/${REPO}.git ${BRANCH}`);
+    console.log("Pushed to GitHub successfully!");
+  } catch (e) {
+    console.log("Failed to push to GitHub:", e.message);
+  }
 }
 
 // ==== CHẠY SCRAPER ====
 async function runScraper() {
-    let stories = [];
-    if (fs.existsSync(STORIES_FILE)) {
-        stories = JSON.parse(fs.readFileSync(STORIES_FILE, 'utf-8'));
+  const allStories = [];
+
+  for (let page = START_PAGE; page <= END_PAGE; page++) {
+    console.log(`Fetching list page: ${page}`);
+    const list = await fetchStoryList(page);
+
+    for (const item of list) {
+      console.log(`Scraping ${item.url}`);
+      const storyData = await fetchStoryData(item.url);
+      if (storyData) allStories.push(storyData);
     }
+  }
 
-    for (let page = START_PAGE; page <= END_PAGE; page++) {
-        console.log(`Fetching list page: ${page}`);
-        let urls;
-        try {
-            urls = await fetchStoryList(page);
-        } catch (e) {
-            console.warn(`[WARN] Failed page ${page}: ${e}`);
-            continue;
-        }
-
-        for (const url of urls) {
-            const slug = url.split('/').pop();
-            let exist = stories.find(s => s.id === slug);
-            if (exist) {
-                console.log(`Skipping existing story: ${slug}`);
-                continue;
-            }
-            console.log(`Scraping story: ${url}`);
-            const data = await scrapeStory(url);
-            if (data) stories.push(data);
-        }
-    }
-
-    fs.writeFileSync(STORIES_FILE, JSON.stringify(stories, null, 2), 'utf-8');
-    console.log(`Saved ${stories.length} stories to ${STORIES_FILE}`);
+  saveStories(allStories);
+  pushToGitHub();
 }
 
-// ==== PUSH LÊN GITHUB ====
-function pushToGitHub() {
-    try {
-        execSync('git config --global user.name "github-actions[bot]"');
-        execSync('git config --global user.email "github-actions[bot]@users.noreply.github.com"');
-        execSync('git add stories.json');
-        execSync('git commit -m "Update stories.json" || echo "No changes to commit"');
-        execSync(`git push ${REPO_URL} ${BRANCH}`);
-        console.log("Pushed to GitHub successfully!");
-    } catch (e) {
-        console.error("Failed to push to GitHub:", e.message);
-    }
-}
-
-// ==== MAIN ====
-(async () => {
-    await runScraper();
-    pushToGitHub();
-})();
+runScraper();
