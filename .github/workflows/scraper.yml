@@ -1,45 +1,38 @@
 name: Manga Scraper
 
 on:
-  workflow_dispatch:
   schedule:
     - cron: "*/30 * * * *" # chạy mỗi 30 phút
+  workflow_dispatch:
 
 jobs:
-  build-and-scrape:
+  scrape:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repo
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 2. Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 20 # phù hợp với manga-lib mới nhất
-          cache: "npm"
+          node-version: "20.x"
 
-      # 3. Clean npm cache để tránh lỗi ETARGET / EBADENGINE
-      - name: Clean npm cache
+      - name: Clear npm cache
         run: npm cache clean --force
 
-      # 4. Cài package
-      - name: Install npm packages
+      - name: Install dependencies
         run: npm install
 
-      # 5. Chạy scraper
       - name: Run scraper
         run: node scraper.js
 
-      # 6. Push kết quả lên GitHub
-      - name: Push changes
+      - name: Push stories.json
         env:
-          GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
-          git add .
-          git commit -m "Update stories.json" || echo "No changes to commit"
-          git push https://$GITHUB_TOKEN@github.com/pro-coconut/pro-coconut.github.io.git main
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add stories.json
+          git commit -m "Update stories.json" || echo "No changes"
+          git push https://$TOKEN@github.com/pro-coconut/pro-coconut.github.io.git main
