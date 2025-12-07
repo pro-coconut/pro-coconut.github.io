@@ -4,192 +4,122 @@ import time
 import requests
 from bs4 import BeautifulSoup
 from git import Repo
-from urllib.parse import urljoin
-from concurrent.futures import ThreadPoolExecutor
 
-# ----------------------------
-# CẤU HÌNH
-# ----------------------------
-REPO_PATH = "."  # root repo
-STORIES_FILE = "stories.json"
-TOKEN = "nhập_token_của_bạn_vào_đây"  # hoặc lấy từ secret/GITHUB_TOKEN trong workflow
+# ===== Cấu hình =====
+REPO_URL = "https://github.com/pro-coconut/pro-coconut.github.io.git"
 BRANCH = "main"
+TOKEN = os.environ.get("MY_GITHUB_TOKEN")
+if not TOKEN:
+    raise ValueError("Missing GitHub token! Add MY_GITHUB_TOKEN in workflow secrets.")
 
-BASE_URL = "https://nettruyen0209.com"
-LIST_PAGE_START = 4
-LIST_PAGE_END = 5  # sửa theo nhu cầu
-STORIES_PER_RUN = 3
-MAX_THREADS = 5
-
-# Danh sách truyện ưu tiên
-PRIORITY_SLUGS = [
-    "bach-luyen-thanh-than",
-    "vo-luyen-dinh-phong",
-    "dai-quan-gia-la-ma-hoang"
-]
+STORIES_FILE = "stories.json"
+BASE_LIST_URL = "https://nettruyen0209.com/danh-sach-truyen/{page}/?sort=last_update&status=0"
+BASE_MANGA_URL = "https://nettruyen0209.com/manga/"
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "*/*",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 }
 
-# ----------------------------
-# Load / Save stories
-# ----------------------------
-def load_stories():
-    if not os.path.exists(STORIES_FILE):
-        return {}
-    try:
-        with open(STORIES_FILE, "r", encoding="utf8") as f:
-            data = json.load(f)
-            result = {}
-            if isinstance(data, list):
-                for s in data:
-                    slug = s.get("id") or s.get("slug")
-                    if slug:
-                        result[slug] = s
-            return result
-    except:
-        return {}
+# ===== Hàm lấy danh sách truyện =====
+def get_story_list(max_pages=5):
+    stories = []
+    for page in range(4, 4 + max_pages):
+        url = BASE_LIST_URL.format(page=page)
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        if r.status_code != 200:
+            print(f"[WARN] Failed to fetch page {page}")
+            continue
+        soup = BeautifulSoup(r.text, "lxml")
+        for item in soup.select(".list-truyen .truyen-item"):
+            title = item.select_one(".truyen-title a").text.strip()
+            link = item.select_one(".truyen-title a")["href"]
+            slug = link.rstrip("/").split("/")[-1]
+            thumbnail = item.select_one("img")["src"]
+            stories.append({
+                "id": slug,
+                "title": title,
+                "author": "Không rõ",
+                "description": "",
+                "thumbnail": thumbnail,
+                "link": link
+            })
+    return stories
 
+# ===== Hàm lấy chapter của truyện =====
+def get_chapters(story_link):
+    chapters = []
+    r = requests.get(story_link, headers=HEADERS, timeout=15)
+    if r.status_code != 200:
+        return chapters
+    soup = BeautifulSoup(r.text, "lxml")
+    chap_list = soup.select(".list-chapter li a")
+    for chap in reversed(chap_list):  # từ chapter 1 trở đi
+        chap_name = chap.text.strip()
+        chap_url = chap["href"]
+        images = get_chapter_images(chap_url)
+        if images:
+            chapters.append({
+                "name": chap_name,
+                "images": images
+            })
+    return chapters
+
+# ===== Hàm lấy ảnh của chapter =====
+def get_chapter_images(chap_url):
+    r = requests.get(chap_url, headers=HEADERS, timeout=15)
+    if r.status_code != 200:
+        return []
+    soup = BeautifulSoup(r.text, "lxml")
+    imgs = soup.select(".page-chapter img")
+    image_urls = [img["src"] for img in imgs if img.get("src")]
+    return image_urls
+
+# ===== Hàm lưu stories.json =====
 def save_stories(data):
-    if isinstance(data, dict):
-        data = list(data.values())
     with open(STORIES_FILE, "w", encoding="utf8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# ----------------------------
-# Request helper
-# ----------------------------
-def safe_get(url):
-    for _ in range(4):
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=12)
-            if r.status_code == 200:
-                return r
-            time.sleep(2)
-        except:
-            time.sleep(2)
-    return None
-
-# ----------------------------
-# Scrape chapter images
-# ----------------------------
-def scrape_chapter_images(chapter_url):
-    r = safe_get(chapter_url)
-    if not r:
-        return []
-    soup = BeautifulSoup(r.text, "lxml")
-    imgs = soup.select("div.page-chapter img")
-    return [img.get("src") for img in imgs if img.get("src")]
-
-# ----------------------------
-# Scrape story info
-# ----------------------------
-def scrape_story(slug, existing_story=None):
-    story_url = f"{BASE_URL}/manga/{slug}"
-    r = safe_get(story_url)
-    if not r:
-        return None
-
-    soup = BeautifulSoup(r.text, "lxml")
-
-    title_tag = soup.select_one("h1.title-detail")
-    author_tag = soup.select_one("li.author a")
-    desc_tag = soup.select_one("div.detail-content p")
-    thumb_tag = soup.select_one("div.picture img")
-
-    title = title_tag.text.strip() if title_tag else slug
-    author = author_tag.text.strip() if author_tag else "Không rõ"
-    description = desc_tag.text.strip() if desc_tag else ""
-    thumbnail = thumb_tag.get("src") if thumb_tag else ""
-
-    # Get chapter links
-    chapter_links = soup.select("ul.list-chapter a")
-    chapter_links = chapter_links[::-1]  # old → new
-
-    # Tạo danh sách chapters từ 1 → N
-    chapters = existing_story.get("chapters", []) if existing_story else []
-
-    start_chapter = len(chapters) + 1
-
-    for i in range(start_chapter, len(chapter_links)+1):
-        chapter_url = f"{BASE_URL}/manga/{slug}/chapter-{i}"
-        images = scrape_chapter_images(chapter_url)
-        if images:
-            chapters.append({
-                "name": f"Chapter {i}",
-                "images": images
-            })
-            print(f"[OK] Scraped {title} - Chapter {i}")
-        else:
-            print(f"[WARN] Chapter {i} failed or no images, skip.")
-
-    story_data = {
-        "id": slug,
-        "title": title,
-        "author": author,
-        "description": description,
-        "thumbnail": thumbnail,
-        "chapters": chapters
-    }
-    return story_data
-
-# ----------------------------
-# Push to GitHub
-# ----------------------------
+# ===== Hàm push lên GitHub =====
 def push_to_github():
-    repo = Repo(REPO_PATH)
+    remote_url_with_token = REPO_URL.replace("https://", f"https://{TOKEN}@")
+    repo = Repo(".")
+    if "origin" in [r.name for r in repo.remotes]:
+        origin = repo.remote("origin")
+        origin.set_url(remote_url_with_token)
+    else:
+        origin = repo.create_remote("origin", remote_url_with_token)
+
     repo.git.add(STORIES_FILE)
-    repo.index.commit(f"Update stories.json")
-    origin = repo.remote(name="origin")
-    # Push with token
-    url_with_token = f"https://{TOKEN}@github.com/{repo.remotes.origin.url.split('github.com/')[1]}"
-    origin.set_url(url_with_token)
+    try:
+        repo.git.commit("-m", "Update stories.json")
+    except:
+        # Không có thay đổi
+        pass
+
     origin.push(refspec=f"{BRANCH}:{BRANCH}")
-    print("[DONE] Pushed to GitHub")
+    print("[DONE] Pushed stories.json to GitHub!")
 
-# ----------------------------
-# Main scraper runner
-# ----------------------------
+# ===== Hàm chính =====
 def run_scraper():
-    stories_dict = load_stories()
-    scraped = 0
+    print("Fetching story list...")
+    story_list = get_story_list(max_pages=3)  # lấy 3 trang ví dụ
+    stories_data = []
 
-    # Danh sách các slug ưu tiên trước
-    slugs = PRIORITY_SLUGS.copy()
+    for idx, story in enumerate(story_list, 1):
+        print(f"Scraping {story['title']} ({idx}/{len(story_list)})")
+        chapters = get_chapters(story["link"])
+        story_data = {
+            "id": story["id"],
+            "title": story["title"],
+            "author": story["author"],
+            "description": story["description"],
+            "thumbnail": story["thumbnail"],
+            "chapters": chapters
+        }
+        stories_data.append(story_data)
+        time.sleep(1)  # tránh bị block
 
-    # Sau đó lấy các slug khác từ danh sách trang
-    for page_num in range(LIST_PAGE_START, LIST_PAGE_END+1):
-        page_url = f"{BASE_URL}/danh-sach-truyen/{page_num}/?sort=last_update&status=0"
-        r = safe_get(page_url)
-        if not r:
-            continue
-        soup = BeautifulSoup(r.text, "lxml")
-        items = soup.select("div.col-truyen-main > div.row > div.col-truyen > a")
-        for a in items:
-            href = a.get("href")
-            if href:
-                slug = href.strip("/").split("/")[-1]
-                if slug not in slugs:
-                    slugs.append(slug)
-
-    # Multi-thread scrape
-    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-        futures = []
-        for slug in slugs:
-            existing = stories_dict.get(slug)
-            futures.append(executor.submit(scrape_story, slug, existing))
-        for future in futures:
-            story_data = future.result()
-            if story_data:
-                stories_dict[story_data["id"]] = story_data
-                scraped += 1
-                print(f"[DONE] Story scraped: {story_data['title']} ({scraped}/{STORIES_PER_RUN})")
-                if scraped >= STORIES_PER_RUN:
-                    break
-
-    save_stories(stories_dict)
+    save_stories(stories_data)
     push_to_github()
 
 if __name__ == "__main__":
