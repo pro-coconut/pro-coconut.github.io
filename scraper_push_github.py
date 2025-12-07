@@ -13,7 +13,7 @@ BRANCH = "main"
 START_PAGE = 4
 END_PAGE = 14
 
-REPO_URL = f"https://{TOKEN}@github.com/{USERNAME}/{REPO_NAME}.git"
+REPO_URL = f"https://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@github.com/pro-coconut/pro-coconut.git"
 LOCAL_DIR = os.getcwd()  # root repo
 STORIES_FILE = os.path.join(LOCAL_DIR, "stories.json")
 
