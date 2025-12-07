@@ -1,0 +1,26 @@
+name: Manga Scraper
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"  # Chạy 30 phút/lần
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install manga-lib axios fs-extra
+
+      - name: Run scraper
+        env:
+          GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+          REPO_NAME: "pro-coconut/pro-coconut.github.io"
+        run: node scraper.js
